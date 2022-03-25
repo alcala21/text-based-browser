@@ -1,3 +1,6 @@
+import os
+import sys
+
 
 nytimes_com = '''
 This New Liquid Is Magnetic, and Mesmerizing
@@ -35,9 +38,23 @@ Twitter and Square Chief Executive Officer Jack Dorsey
 '''
 
 # write your code here
+directory = sys.argv[1]
+os.makedirs(directory, exist_ok=True)
+cache = os.listdir(directory)
+
 while True:
     address = input().replace(".", "_")
-    if address in globals():
-        print(globals()[address])
+    filename = address.split("_")[0]
+    if filename in cache:
+        with open(os.path.join(directory, filename), "r") as f:
+            print(f.read())
+    elif address in globals():
+        content = globals()[address]
+        print(content)
+        with open(os.path.join(directory, filename), "w") as f:
+            f.write(content)
+        cache.append(filename)
     elif address == 'exit':
         break
+    else:
+        print("Error: Incorrect URL")
