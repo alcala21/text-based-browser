@@ -1,10 +1,7 @@
-from hstest.stage_test import StageTest
-from hstest.test_case import TestCase
-from hstest.check_result import CheckResult
-
+from hstest.stage_test import *
+import requests
 import os
 import shutil
-
 import sys
 if sys.platform.startswith("win"):
     import _locale
@@ -18,135 +15,98 @@ CheckResult.wrong = lambda feedback: CheckResult(False, feedback)
 class TextBasedBrowserTest(StageTest):
 
     def generate(self):
+
+        dir_for_files = 'tb_tabs'
         return [
             TestCase(
-                stdin='bloomberg.com\nbloomberg\nexit',
-                attach=('Bloomberg', 'New York Times', 'bloomberg'),
-                args=['tb_tabs']
+                stdin='bloomberg.com\nexit',
+                attach='bloomberg.com',
+                args=[dir_for_files]
             ),
             TestCase(
-                stdin='nytimes.com\nnytimes\nexit',
-                attach=('New York Times', 'Bloomberg', 'nytimes'),
-                args=['tb_tabs']
-            ),
-            TestCase(
-                stdin='nytimescom\nexit',
-                args=['tb_tabs']
-            ),
-            TestCase(
-                stdin='blooomberg.com\nexit',
-                args=['tb_tabs']
-            ),
-            TestCase(
-                stdin='blooomberg.com\nnytimes.com\nexit',
-                attach=(None, 'New York Times', 'Bloomberg', 'nytimes'),
-                args=['tb_tabs']
-            ),
-            TestCase(
-                stdin='nytimescom\nbloomberg.com\nexit',
-                attach=(None, 'Bloomberg', 'New York Times', 'bloomberg'),
-                args=['tb_tabs']
-            ),
-            TestCase(
-                stdin='bloomberg.com\nnytimes.com\nback\nexit',
-                attach={
-                    'This New Liquid Is Magnetic, and Mesmerizing': (1, 'New York Times'),
-                    'The Space Race: From Apollo 11 to Elon Musk': (2, 'Bloomberg')
-                },
-                args=['tb_tabs']
-            ),
-            TestCase(
-                stdin='nytimes.com\nbloomberg.com\nback\nexit',
-                attach={
-                    'This New Liquid Is Magnetic, and Mesmerizing': (2, 'New York Times'),
-                    'The Space Race: From Apollo 11 to Elon Musk': (1, 'Bloomberg')
-                },
-                args=['tb_tabs']
-            ),
+                stdin='docs.python.org\nexit',
+                attach='docs.python.org',
+                args=[dir_for_files]
+            )
         ]
 
-    def _check_files(self, path_for_tabs: str, right_word: str) -> int:
+    def compare_pages(self, output_page, ideal_page):
+        ideal_page = ideal_page.split('\n')
+        for line in ideal_page:
+            if line.strip() not in output_page:
+                return False, line.strip()
+        return True, ""
+
+    def _check_files(self, path_for_tabs: str, ideal_page: str):
         """
         Helper which checks that browser saves visited url in files and
         provides access to them.
 
         :param path_for_tabs: directory which must contain saved tabs
-        :param right_word: Word-marker which must be in right tab
-        :return: True, if right_words is present in saved tab
+        :param ideal_page: HTML code of the needed page
         """
 
-        for path, dirs, files in os.walk(path_for_tabs):
-            for file in files:
-                with open(os.path.join(path_for_tabs, file), 'r') as tab:
-                    try:
-                        content = tab.read()
-                    except UnicodeDecodeError:
-                        return -1
-                    if right_word in content:
-                        return 1
-            break
+        path, dirs, filenames = next(os.walk(path_for_tabs))
 
-        return 0
+        for file in filenames:
+            print("file: {}".format(file))
+            with open(os.path.join(path_for_tabs, file), 'r', encoding='utf-8') as tab:
+                try:
+                    content = tab.read()
+                except UnicodeDecodeError:
+                    raise WrongAnswer('An error occurred while reading your saved tab. '
+                                      'Perhaps you used the wrong encoding?')
+                is_page_saved_correctly, wrong_line = self.compare_pages(content, ideal_page)
+                if not is_page_saved_correctly:
+                    raise WrongAnswer(f"The following line is missing from the file {file}:\n"
+                                      f"\'{wrong_line}\'\n"
+                                      f"Make sure you output the needed web page to the file\n"
+                                      f"and save the file in the utf-8 encoding.")
+
+    @staticmethod
+    def get_page(url):
+
+        url = f'https://{url}'
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " \
+                     "Chrome/70.0.3538.77 Safari/537.36"
+        try:
+            page = requests.get(url, headers={'User-Agent': user_agent})
+        except requests.exceptions.ConnectionError:
+            raise WrongAnswer(f"An error occurred while tests tried to connect to the page {url}.\n"
+                              f"Please try again a bit later.")
+        return page.text
 
     def check(self, reply, attach):
 
         # Incorrect URL
         if attach is None:
-            if 'error' in reply.lower():
-                return CheckResult.correct()
+            if '<p>' in reply:
+                return CheckResult.wrong('You haven\'t checked whether the URL was correct')
             else:
-                return CheckResult.wrong('There was no "error" word, but should be.')
+                return CheckResult.correct()
 
         # Correct URL
-        if isinstance(attach, tuple):
-
-            if len(attach) == 4:
-                _, *attach = attach
-                if 'error' not in reply.lower():
-                    return CheckResult.wrong('There was no "error" word, but should be.')
-
-            right_word, wrong_word, correct_file_name = attach
-
-            path_for_tabs = 'tb_tabs'
+        if isinstance(attach, str):
+            path_for_tabs = os.path.join(os.curdir, 'tb_tabs')
 
             if not os.path.isdir(path_for_tabs):
-                return CheckResult.wrong(
-                    "Can't find a directory \"" + path_for_tabs + "\" "
-                    "in which you should save your web pages.")
+                return CheckResult.wrong("There is no directory for tabs")
 
-            check_files_result = self._check_files(path_for_tabs, right_word)
-            if not check_files_result:
-                return CheckResult.wrong(
-                    "Seems like you did\'n save the web page "
-                    "\"" + right_word + "\" into the "
-                    "directory \"" + path_for_tabs + "\". "
-                    "This file with page should be named \"" + correct_file_name + "\"")
-            elif check_files_result == -1:
-                return CheckResult.wrong('An error occurred while reading your saved tab. '
-                                         'Perhaps you used the wrong encoding?')
+            ideal_page = TextBasedBrowserTest.get_page(attach)
+            self._check_files(path_for_tabs, ideal_page)
 
             try:
                 shutil.rmtree(path_for_tabs)
             except PermissionError:
-                return CheckResult.wrong("Impossible to remove the directory for tabs. Perhaps you haven't closed some file?")
+                return CheckResult.wrong("Impossible to remove the directory for tabs. \n"
+                                         "Perhaps you haven't closed some file?")
 
-            if wrong_word in reply:
-                return CheckResult.wrong('It seems like you printed wrong variable')
+            is_page_printed_correctly, wrong_line = self.compare_pages(reply, ideal_page)
+            if not is_page_printed_correctly:
+                return CheckResult.wrong(f"The following line in missing from your console output:\n"
+                                         f"\'{wrong_line}\'\n"
+                                         f"Make sure you output the needed web page to the console.")
 
-            if right_word in reply:
-                return CheckResult.correct()
-
-            return CheckResult.wrong('You printed neither bloomberg_com nor nytimes_com')
-
-        if isinstance(attach, dict):
-            for key, value in attach.items():
-                count, site = value
-                real_count = reply.count(key)
-                if reply.count(key) != count:
-                    return CheckResult.wrong(
-                        f'The site "{site}" should be displayed {count} time(s).\n'
-                        f'Actually displayed: {real_count} time(s).'
-                    )
             return CheckResult.correct()
 
 
