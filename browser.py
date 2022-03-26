@@ -37,24 +37,48 @@ Twitter and Square Chief Executive Officer Jack Dorsey
  Tuesday, a signal of the strong ties between the Silicon Valley giants.
 '''
 
-# write your code here
-directory = sys.argv[1]
-os.makedirs(directory, exist_ok=True)
-cache = os.listdir(directory)
 
-while True:
-    address = input().replace(".", "_")
-    filename = address.split("_")[0]
-    if filename in cache:
-        with open(os.path.join(directory, filename), "r") as f:
+class Browser:
+
+    def __init__(self):
+        self.directory = sys.argv[1]
+        os.makedirs(self.directory, exist_ok=True)
+        self.cache = os.listdir(self.directory)
+        self.address = None
+        self.filename = None
+        self.stack = []
+
+    def run(self):
+        while True:
+            self.address = input().replace(".", "_")
+            self.filename = self.address.split("_")[0]
+
+            if self.filename in self.cache:
+                self.print()
+                self.stack.append(self.filename)
+            elif self.address in globals():
+                content = globals()[self.address]
+                print(content)
+                self.save(content)
+                self.stack.append(self.filename)
+            elif self.address == "exit":
+                break
+            elif self.address == "back":
+                if len(self.stack) >= 2:
+                    self.stack.pop()
+                    self.filename = self.stack.pop()
+                    self.print()
+            else:
+                print("Error: Incorrect URL")
+
+    def print(self):
+        with open(os.path.join(self.directory, self.filename), "r") as f:
             print(f.read())
-    elif address in globals():
-        content = globals()[address]
-        print(content)
-        with open(os.path.join(directory, filename), "w") as f:
+
+    def save(self, content):
+        with open(os.path.join(self.directory, self.filename), "w") as f:
             f.write(content)
-        cache.append(filename)
-    elif address == 'exit':
-        break
-    else:
-        print("Error: Incorrect URL")
+
+
+bw = Browser()
+bw.run()
