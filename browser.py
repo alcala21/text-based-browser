@@ -1,6 +1,8 @@
 import os
 import sys
 import requests
+from bs4 import BeautifulSoup
+from colorama import Fore
 
 
 class Browser:
@@ -33,15 +35,22 @@ class Browser:
                 self.stack.append(self.filename)
                 continue
 
+            if self.filename.startswith("http://") or self.filename.startswith("https://"):
+                colon_index = self.filename.index(":")
+                self.filename = self.filename[colon_index + 3:]
+
             try:
-                page = requests.get("http://" + self.filename)
+                page = requests.get("https://" + self.filename)
                 if page.status_code == 200:
-                    self.print_and_save(page.text)
+                    soup = BeautifulSoup(page.text, "html.parser")
+                    for i in soup.find_all("a"):
+                        i.string = "".join([Fore.BLUE, i.get_text(), Fore.RESET])
+                    self.print_and_save(soup.get_text())
                     self.stack.append(self.filename)
                 else:
                     raise requests.exceptions.ConnectionError
             except requests.exceptions.ConnectionError:
-                print("Error: Incorrect URL")
+                print("Incorrect URL")
 
     def print(self):
         with open(os.path.join(self.directory, self.filename), "r", encoding='UTF-8') as f:

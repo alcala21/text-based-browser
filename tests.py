@@ -1,8 +1,11 @@
 from hstest.stage_test import *
 import requests
+from bs4 import BeautifulSoup
 import os
 import shutil
+from colorama import Fore
 import sys
+import re
 if sys.platform.startswith("win"):
     import _locale
     # pylint: disable=protected-access
@@ -16,55 +19,63 @@ class TextBasedBrowserTest(StageTest):
 
     def generate(self):
 
-        dir_for_files = 'tb_tabs'
+        dir_for_files = os.path.join(os.curdir, 'tb_tabs')
         return [
             TestCase(
-                stdin='bloomberg.com\nexit',
-                attach='bloomberg.com',
+                stdin='en.wikipedia.org\nexit',
+                attach='en.wikipedia.org',
                 args=[dir_for_files]
             ),
             TestCase(
-                stdin='docs.python.org\nexit',
-                attach='docs.python.org',
+                stdin='bloombergcom\nexit',
                 args=[dir_for_files]
-            )
+            ),
         ]
 
-    def compare_pages(self, output_page, ideal_page):
-        ideal_page = ideal_page.split('\n')
-        for line in ideal_page:
-            if line.strip() not in output_page:
-                return False, line.strip()
-        return True, ""
-
-    def _check_files(self, path_for_tabs: str, ideal_page: str):
+    def check_output(self, output_text, links, not_links, source):
         """
-        Helper which checks that browser saves visited url in files and
-        provides access to them.
-
-        :param path_for_tabs: directory which must contain saved tabs
-        :param ideal_page: HTML code of the needed page
+        :param output_text: the text from the user's file or from the console output
+        :param links: list with links highlighted with blue
+        :param not_links: list with text that was taken from other tags than <a>
+        :param source: the name of the file from which the user's text is taken or "console output" line
+        :return: raises WrongAnswer if a highlighted link is not found in the output_text,
+        or if a non-link text is not found in the output_text,
+        or if a non-link text is highlighted with blue
         """
+        output_text = re.sub(r'\s', ' ', output_text)
+        for i, link in enumerate(links):
+            link = re.sub(r'\s', ' ', link)
+            links[i] = link
+            if not link:
+                continue
+            if link not in output_text:
+                raise WrongAnswer(f"In {source} the following link is missing: \n"
+                                  f"{link}")
+            if Fore.BLUE + link not in output_text:
+                raise WrongAnswer(f"In {source} the following link is not highlighted with blue: \n"
+                                  f"{link}")
 
-        path, dirs, filenames = next(os.walk(path_for_tabs))
+        for line in not_links:
+            line = re.sub(r'\s', ' ', line)
+            highlighted_version = Fore.BLUE + line
+            # the following conditions is put here in case some text from non-link tags coincides with some link's text
+            if highlighted_version in links:
+                continue
 
-        for file in filenames:
-            print("file: {}".format(file))
-            with open(os.path.join(path_for_tabs, file), 'r', encoding='utf-8') as tab:
-                try:
-                    content = tab.read()
-                except UnicodeDecodeError:
-                    raise WrongAnswer('An error occurred while reading your saved tab. '
-                                      'Perhaps you used the wrong encoding?')
-                is_page_saved_correctly, wrong_line = self.compare_pages(content, ideal_page)
-                if not is_page_saved_correctly:
-                    raise WrongAnswer(f"The following line is missing from the file {file}:\n"
-                                      f"\'{wrong_line}\'\n"
-                                      f"Make sure you output the needed web page to the file\n"
-                                      f"and save the file in the utf-8 encoding.")
+            if line not in output_text:
+                raise WrongAnswer(f"In {source} the following text is not found:\n"
+                                  f"{line}\n"
+                                  f"Make sure you extract all the text from the page.\n"
+                                  f"Also, make sure you don't highlight any parts of this text with blue, \n"
+                                  f"and don't put any escape sequences in it.")
+
+            if highlighted_version in output_text:
+                raise WrongAnswer(f"In {source} the following text is highlighted with blue:\n"
+                                  f"{highlighted_version}\n"
+                                  f"Make sure you highlight only the links.")
 
     @staticmethod
-    def get_page(url):
+    def get_links_and_text(url):
 
         url = f'https://{url}'
         user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " \
@@ -74,38 +85,46 @@ class TextBasedBrowserTest(StageTest):
         except requests.exceptions.ConnectionError:
             raise WrongAnswer(f"An error occurred while tests tried to connect to the page {url}.\n"
                               f"Please try again a bit later.")
-        return page.text
+        soup = BeautifulSoup(page.content, 'html.parser')
+        links = []
+        links_tags = soup.find_all("a")
+        for tag in links_tags:
+            link_text = str(tag.text.strip())
+            if link_text:
+                links.append(link_text)
+        not_links = []
+        for tag in soup.find_all(["h1", "p"]):
+            tag_text = str(tag.text.strip())
+            if tag not in links_tags and tag_text and "<a" not in str(tag) and tag_text not in links:
+                not_links.append(tag_text)
+
+        return links, not_links
 
     def check(self, reply, attach):
 
         # Incorrect URL
         if attach is None:
-            if '<p>' in reply:
-                return CheckResult.wrong('You haven\'t checked whether the URL was correct')
+            if 'incorrect url' not in reply.lower():
+                return CheckResult.wrong('An invalid URL was input to your program.\n'
+                                         'Your program should print \'Incorrect URL\'.')
             else:
                 return CheckResult.correct()
 
         # Correct URL
         if isinstance(attach, str):
+            links, not_links = TextBasedBrowserTest.get_links_and_text(attach)
+
             path_for_tabs = os.path.join(os.curdir, 'tb_tabs')
 
             if not os.path.isdir(path_for_tabs):
-                return CheckResult.wrong("There is no directory for tabs")
-
-            ideal_page = TextBasedBrowserTest.get_page(attach)
-            self._check_files(path_for_tabs, ideal_page)
+                return CheckResult.wrong("There are no directory for tabs")
 
             try:
                 shutil.rmtree(path_for_tabs)
             except PermissionError:
-                return CheckResult.wrong("Impossible to remove the directory for tabs. \n"
-                                         "Perhaps you haven't closed some file?")
+                return CheckResult.wrong("Impossible to remove the directory for tabs. Perhaps you haven't closed some file?")
 
-            is_page_printed_correctly, wrong_line = self.compare_pages(reply, ideal_page)
-            if not is_page_printed_correctly:
-                return CheckResult.wrong(f"The following line in missing from your console output:\n"
-                                         f"\'{wrong_line}\'\n"
-                                         f"Make sure you output the needed web page to the console.")
+            self.check_output(reply, links, not_links, "the console output")
 
             return CheckResult.correct()
 
